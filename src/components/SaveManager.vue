@@ -38,7 +38,7 @@
               >
                 <div class="slot-info">
                   <span class="slot-name">{{ slot.name === 'auto' ? '📅 自动存档' : slot.name }}</span>
-                  <span class="slot-meta">第 {{ slot.dayCount }} 天 · {{ formatDate(slot.savedAt) }}</span>
+                  <span class="slot-meta">第 {{ slot.dayCount }} 天 · {{ formatDate(slot.savedAt) }}<template v-if="slot.survivorCount > 0"> · 👥 {{ slot.survivorCount }} 人</template></span>
                 </div>
                 <div class="slot-actions">
                   <button class="action-btn load" @click="$emit('load', slot.name)">加载</button>

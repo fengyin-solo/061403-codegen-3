@@ -167,7 +167,7 @@ export function useGame() {
     temperature.value = Math.min(100, temperature.value + tempBoost)
     addLog(`💊 照料者让大家恢复了 ${tempBoost} 点体温`, 'success')
     
-    const sickSurvivors = survivors.value.filter(s => s.health < 70 && s.role === 'caretaker' === false)
+    const sickSurvivors = survivors.value.filter(s => s.health < 70 && s.role !== 'caretaker')
     sickSurvivors.forEach(s => {
       s.health = Math.min(100, s.health + 5)
     })
@@ -445,8 +445,11 @@ export function useGame() {
     }
   }
 
+  const SAVE_VERSION = 2
+
   function saveGame(slot = 'manual') {
     const gameState = {
+      version: SAVE_VERSION,
       temperature: temperature.value,
       heat: heat.value,
       wood: wood.value,
@@ -456,7 +459,9 @@ export function useGame() {
       isDay: isDay.value,
       dayCount: dayCount.value,
       isBlizzard: isBlizzard.value,
-      survivors: survivors.value,
+      gameOver: gameOver.value,
+      gameOverReason: gameOverReason.value,
+      survivors: JSON.parse(JSON.stringify(survivors.value)),
       rescueCooldown: rescueCooldown.value,
       savedAt: Date.now()
     }
@@ -473,26 +478,41 @@ export function useGame() {
     
     try {
       const gameState = JSON.parse(saved)
-      temperature.value = gameState.temperature
-      heat.value = gameState.heat
-      wood.value = gameState.wood
-      food.value = gameState.food
-      hide.value = gameState.hide
-      tools.value = gameState.tools
-      isDay.value = gameState.isDay
-      dayCount.value = gameState.dayCount
-      isBlizzard.value = gameState.isBlizzard
-      survivors.value = gameState.survivors || []
-      rescueCooldown.value = gameState.rescueCooldown || 0
-      gameOver.value = false
-      gameOverReason.value = ''
+      
+      temperature.value = gameState.temperature ?? 80
+      heat.value = gameState.heat ?? 50
+      wood.value = gameState.wood ?? 10
+      food.value = gameState.food ?? 5
+      hide.value = gameState.hide ?? 0
+      tools.value = gameState.tools ?? 0
+      isDay.value = gameState.isDay ?? true
+      dayCount.value = gameState.dayCount ?? 1
+      isBlizzard.value = gameState.isBlizzard ?? false
+      gameOver.value = gameState.gameOver ?? false
+      gameOverReason.value = gameState.gameOverReason ?? ''
+      rescueCooldown.value = gameState.rescueCooldown ?? 0
       actionLog.value = []
+      
+      const rawSurvivors = gameState.survivors || []
+      survivors.value = rawSurvivors.map(s => ({
+        id: s.id ?? Date.now() + Math.random(),
+        name: s.name ?? '未知幸存者',
+        health: s.health ?? 50,
+        role: s.role ?? 'idle',
+        rescuedAt: s.rescuedAt ?? 1
+      }))
       
       stopTimers()
       startTimers()
       
       if (!isDay.value) {
-        startNightCycle()
+        nightConsumptionTimer = setInterval(() => {
+          consumeHeat()
+        }, 1000)
+      }
+      
+      if (gameOver.value) {
+        stopTimers()
       }
       
       addLog(`成功加载存档：${slot === 'auto' ? '自动存档' : slot}`, 'success')
@@ -514,7 +534,8 @@ export function useGame() {
           slots.push({
             name: slotName,
             dayCount: data.dayCount,
-            savedAt: data.savedAt
+            savedAt: data.savedAt,
+            survivorCount: (data.survivors || []).length
           })
         } catch (e) {}
       }
@@ -550,6 +571,17 @@ export function useGame() {
   }
 
   onMounted(() => {
+    const autoSave = localStorage.getItem('snowSurvival_auto')
+    if (autoSave) {
+      try {
+        const data = JSON.parse(autoSave)
+        if (data.version === SAVE_VERSION) {
+          loadGame('auto')
+          addLog('已自动恢复上次进度', 'info')
+          return
+        }
+      } catch (e) {}
+    }
     startTimers()
     addLog('欢迎来到雪地生存！白天收集资源，夜晚保持温暖。', 'info')
     addLog('提示：尝试救援幸存者，他们能帮你采集、守夜和照料！', 'info')
