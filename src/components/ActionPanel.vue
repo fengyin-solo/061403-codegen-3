@@ -35,6 +35,17 @@
         <span class="btn-hint">需要: 2🪵 + 1🦊</span>
       </button>
       <button 
+        class="action-btn rescue-btn" 
+        :class="{ disabled: !canRescue || gameOver }"
+        @click="$emit('rescue')"
+      >
+        <span class="btn-icon">🆘</span>
+        <span class="btn-text">救援幸存者</span>
+        <span class="btn-cost">-12 体温 -2 食物</span>
+        <span class="btn-hint" v-if="rescueCooldown > 0">冷却: {{ rescueCooldown }} 天</span>
+        <span class="btn-hint" v-else>成功率: {{ Math.round((0.5 + tools * 0.1) * 100) }}%</span>
+      </button>
+      <button 
         class="action-btn fire-btn" 
         :class="{ disabled: !canFire || gameOver }"
         @click="$emit('fire')"
@@ -64,11 +75,14 @@ defineProps({
   gameOver: { type: Boolean, default: false },
   canFire: { type: Boolean, default: false },
   canCraft: { type: Boolean, default: false },
+  canRescue: { type: Boolean, default: false },
   huntRate: { type: Number, default: 0.3 },
-  food: { type: Number, default: 0 }
+  food: { type: Number, default: 0 },
+  tools: { type: Number, default: 0 },
+  rescueCooldown: { type: Number, default: 0 }
 })
 
-defineEmits(['chop', 'hunt', 'craft', 'fire', 'eat'])
+defineEmits(['chop', 'hunt', 'craft', 'fire', 'eat', 'rescue'])
 </script>
 
 <style scoped>
@@ -152,6 +166,15 @@ defineEmits(['chop', 'hunt', 'craft', 'fire', 'eat'])
 
 .food-btn:hover:not(.disabled) {
   box-shadow: 0 5px 20px rgba(50, 200, 100, 0.4);
+}
+
+.rescue-btn:not(.disabled) {
+  border-color: rgba(255, 193, 7, 0.6);
+  background: linear-gradient(135deg, rgba(255, 193, 7, 0.3), rgba(255, 152, 0, 0.1));
+}
+
+.rescue-btn:hover:not(.disabled) {
+  box-shadow: 0 5px 20px rgba(255, 193, 7, 0.4);
 }
 
 .btn-icon {

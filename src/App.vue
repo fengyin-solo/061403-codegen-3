@@ -39,6 +39,15 @@
             :hide="hide"
             :tools="tools"
           />
+          <SurvivorPanel 
+            :survivors="survivors"
+            :survivorCount="survivorCount"
+            :gathererCount="gathererCount"
+            :guardCount="guardCount"
+            :caretakerCount="caretakerCount"
+            :roles="SURVIVOR_ROLES"
+            @assignRole="handleAssignRole"
+          />
         </div>
 
         <div class="center-panel">
@@ -63,13 +72,17 @@
             :gameOver="gameOver"
             :canFire="canMakeFire"
             :canCraft="wood >= 2 && hide >= 1"
+            :canRescue="canRescue"
             :huntRate="huntSuccessRate"
             :food="food"
+            :tools="tools"
+            :rescueCooldown="rescueCooldown"
             @chop="handleChop"
             @hunt="handleHunt"
             @craft="handleCraft"
             @fire="handleFire"
             @eat="handleEat"
+            @rescue="handleRescue"
           />
         </div>
       </div>
@@ -104,6 +117,7 @@ import ActionPanel from './components/ActionPanel.vue'
 import LogPanel from './components/LogPanel.vue'
 import SaveManager from './components/SaveManager.vue'
 import GameOver from './components/GameOver.vue'
+import SurvivorPanel from './components/SurvivorPanel.vue'
 
 const {
   temperature,
@@ -122,11 +136,21 @@ const {
   isDanger,
   canMakeFire,
   huntSuccessRate,
+  survivors,
+  survivorCount,
+  gathererCount,
+  guardCount,
+  caretakerCount,
+  canRescue,
+  rescueCooldown,
+  SURVIVOR_ROLES,
   chopWood,
   hunt,
   makeTools,
   makeFire,
   eatFood,
+  rescueSurvivor,
+  assignRole,
   saveGame,
   loadGame,
   getSaveSlots,
@@ -204,6 +228,24 @@ function handleEat() {
   } else {
     playWarning()
   }
+}
+
+function handleRescue() {
+  if (canRescue.value) {
+    const oldCount = survivorCount.value
+    rescueSurvivor()
+    if (survivorCount.value > oldCount) {
+      playSuccess()
+    } else {
+      playWarning()
+    }
+  } else {
+    playWarning()
+  }
+}
+
+function handleAssignRole(survivorId, role) {
+  assignRole(survivorId, role)
 }
 
 function handleSave(slotName) {

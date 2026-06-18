@@ -1,5 +1,12 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 
+const SURVIVOR_NAMES = ['阿雪', '老林', '小红', '大刚', '小梅', '阿强', '小雪', '大山', '小燕', '老王']
+const SURVIVOR_ROLES = {
+  gatherer: { name: '采集', icon: '🧺', description: '每天自动收集木头和食物' },
+  guard: { name: '守夜', icon: '🛡️', description: '夜间降低热量消耗，抵御危险' },
+  caretaker: { name: '照料', icon: '💊', description: '提升全员体温恢复，节省食物' }
+}
+
 export function useGame() {
   const temperature = ref(80)
   const heat = ref(50)
@@ -13,11 +20,17 @@ export function useGame() {
   const gameOver = ref(false)
   const gameOverReason = ref('')
   const actionLog = ref([])
+  const survivors = ref([])
+  const rescueCooldown = ref(0)
 
   const DAY_DURATION = 30000
   const NIGHT_DURATION = 20000
   const HEAT_CONSUMPTION_RATE = 2
   const BLIZZARD_CHANCE = 0.15
+  const FOOD_CONSUMPTION_PER_SURVIVOR = 1
+  const RESCUE_COST_TEMP = 12
+  const RESCUE_COST_FOOD = 2
+  const RESCUE_COOLDOWN_DAYS = 2
 
   let dayNightTimer = null
   let nightConsumptionTimer = null
@@ -28,11 +41,54 @@ export function useGame() {
   const canMakeFire = computed(() => wood.value >= 3)
   const canHunt = computed(() => tools.value > 0)
   const huntSuccessRate = computed(() => 0.3 + tools.value * 0.15)
+  
+  const survivorCount = computed(() => survivors.value.length)
+  const gathererCount = computed(() => survivors.value.filter(s => s.role === 'gatherer').length)
+  const guardCount = computed(() => survivors.value.filter(s => s.role === 'guard').length)
+  const caretakerCount = computed(() => survivors.value.filter(s => s.role === 'caretaker').length)
+  
+  const canRescue = computed(() => {
+    return !gameOver.value && isDay.value && rescueCooldown.value <= 0 && food.value >= RESCUE_COST_FOOD
+  })
+  
+  const dailyFoodConsumption = computed(() => {
+    const base = survivorCount.value
+    const caretakerBonus = caretakerCount.value * 0.3
+    return Math.max(0, Math.ceil(base * (1 - caretakerBonus)))
+  })
+  
+  const heatConsumptionMultiplier = computed(() => {
+    const base = 1 + survivorCount.value * 0.15
+    const guardBonus = guardCount.value * 0.1
+    return Math.max(0.3, base - guardBonus)
+  })
+  
+  const temperatureRecoveryBonus = computed(() => {
+    return caretakerCount.value * 0.5
+  })
+
+  function generateRandomSurvivor() {
+    const usedNames = survivors.value.map(s => s.name)
+    const availableNames = SURVIVOR_NAMES.filter(n => !usedNames.includes(n))
+    const name = availableNames.length > 0 
+      ? availableNames[Math.floor(Math.random() * availableNames.length)]
+      : `幸存者${survivors.value.length + 1}`
+    
+    const health = Math.floor(Math.random() * 30) + 50
+    
+    return {
+      id: Date.now() + Math.random(),
+      name,
+      health,
+      role: 'idle',
+      rescuedAt: dayCount.value
+    }
+  }
 
   function addLog(message, type = 'info') {
     const timestamp = new Date().toLocaleTimeString()
     actionLog.value.unshift({ message, type, timestamp })
-    if (actionLog.value.length > 20) {
+    if (actionLog.value.length > 30) {
       actionLog.value.pop()
     }
   }
@@ -47,18 +103,22 @@ export function useGame() {
     if (temperature.value >= 100) {
       temperature.value = 100
     }
+    if (food.value < 0) {
+      food.value = 0
+    }
   }
 
   function consumeHeat() {
     if (gameOver.value) return
     
-    const multiplier = isBlizzard.value ? 2 : 1
-    const consumption = HEAT_CONSUMPTION_RATE * multiplier
+    const blizzardMultiplier = isBlizzard.value ? 2 : 1
+    const consumption = HEAT_CONSUMPTION_RATE * blizzardMultiplier * heatConsumptionMultiplier.value
     
     if (heat.value >= consumption) {
       heat.value -= consumption
       if (temperature.value < 80) {
-        temperature.value = Math.min(80, temperature.value + 1)
+        const recovery = 1 + temperatureRecoveryBonus.value
+        temperature.value = Math.min(80, temperature.value + recovery)
       }
     } else {
       heat.value = 0
@@ -69,11 +129,115 @@ export function useGame() {
     checkGameOver()
   }
 
+  function applySurvivorGathering() {
+    if (gathererCount.value <= 0) return
+    
+    const woodGathered = gathererCount.value * (Math.floor(Math.random() * 2) + 1)
+    const foodGathered = gathererCount.value * (Math.floor(Math.random() * 2) + 1)
+    
+    wood.value += woodGathered
+    food.value += foodGathered
+    
+    addLog(`🧺 采集者带回了 ${woodGathered} 木头和 ${foodGathered} 食物`, 'success')
+  }
+
+  function applySurvivorGuardNight() {
+    if (guardCount.value <= 0) return
+    
+    if (Math.random() < 0.3 + guardCount.value * 0.1) {
+      const events = [
+        { msg: '🛡️ 守夜者发现了一只受伤的狐狸，获得 1 兽皮', effect: () => { hide.value += 1 } },
+        { msg: '🛡️ 守夜者巡逻时捡到了一些散落的木材', effect: () => { wood.value += 2 } },
+        { msg: '🛡️ 守夜者成功驱赶了野狼，营地安然无恙', effect: () => {} }
+      ]
+      const event = events[Math.floor(Math.random() * events.length)]
+      event.effect()
+      addLog(event.msg, 'success')
+    }
+    
+    if (isBlizzard.value && Math.random() < guardCount.value * 0.25) {
+      addLog('🛡️ 守夜者加固了营地，暴风雪的影响有所减轻', 'success')
+    }
+  }
+
+  function applySurvivorCaretaking() {
+    if (caretakerCount.value <= 0) return
+    
+    const tempBoost = caretakerCount.value * 3
+    temperature.value = Math.min(100, temperature.value + tempBoost)
+    addLog(`💊 照料者让大家恢复了 ${tempBoost} 点体温`, 'success')
+    
+    const sickSurvivors = survivors.value.filter(s => s.health < 70 && s.role === 'caretaker' === false)
+    sickSurvivors.forEach(s => {
+      s.health = Math.min(100, s.health + 5)
+    })
+  }
+
+  function consumeDailyFood() {
+    if (dailyFoodConsumption.value <= 0) return
+    
+    if (food.value >= dailyFoodConsumption.value) {
+      food.value -= dailyFoodConsumption.value
+      if (dailyFoodConsumption.value > 0) {
+        addLog(`🍖 今天消耗了 ${dailyFoodConsumption.value} 份食物`, 'info')
+      }
+    } else {
+      const deficit = dailyFoodConsumption.value - food.value
+      food.value = 0
+      temperature.value = Math.max(0, temperature.value - deficit * 5)
+      addLog(`⚠️ 食物不足！缺少 ${deficit} 份食物，全员体温下降`, 'warning')
+    }
+  }
+
+  function triggerSurvivorDailyEvent() {
+    if (survivorCount.value === 0) return
+    
+    const eventChance = 0.2
+    
+    if (Math.random() > eventChance) return
+    
+    const events = [
+      {
+        msg: (name) => `${name} 在营地周围发现了一些浆果，获得 2 食物`,
+        effect: () => { food.value += 2 },
+        type: 'success'
+      },
+      {
+        msg: (name) => `${name} 讲述了一个有趣的故事，大家士气高涨`,
+        effect: () => { temperature.value = Math.min(100, temperature.value + 3) },
+        type: 'success'
+      },
+      {
+        msg: (name) => `${name} 在雪地里发现了被遗弃的工具！获得 1 工具`,
+        effect: () => { tools.value += 1 },
+        type: 'success'
+      },
+      {
+        msg: (name) => `${name} 不小心扭伤了脚，需要休息`,
+        effect: () => {
+          const survivor = survivors.value[Math.floor(Math.random() * survivors.value.length)]
+          if (survivor) survivor.health = Math.max(30, survivor.health - 15)
+        },
+        type: 'warning'
+      }
+    ]
+    
+    const event = events[Math.floor(Math.random() * events.length)]
+    const randomSurvivor = survivors.value[Math.floor(Math.random() * survivors.value.length)]
+    
+    if (randomSurvivor) {
+      event.effect()
+      addLog(event.msg(randomSurvivor.name), event.type)
+    }
+  }
+
   function startNightCycle() {
     addLog(`夜幕降临，第 ${dayCount.value} 天结束`, 'info')
     nightConsumptionTimer = setInterval(() => {
       consumeHeat()
     }, 1000)
+    
+    applySurvivorGuardNight()
     
     if (Math.random() < BLIZZARD_CHANCE) {
       triggerBlizzard()
@@ -84,6 +248,16 @@ export function useGame() {
     dayCount.value++
     addLog(`天亮了，第 ${dayCount.value} 天开始`, 'success')
     isBlizzard.value = false
+    
+    if (rescueCooldown.value > 0) {
+      rescueCooldown.value--
+    }
+    
+    consumeDailyFood()
+    applySurvivorGathering()
+    applySurvivorCaretaking()
+    triggerSurvivorDailyEvent()
+    
     if (nightConsumptionTimer) {
       clearInterval(nightConsumptionTimer)
       nightConsumptionTimer = null
@@ -102,6 +276,58 @@ export function useGame() {
   function triggerBlizzard() {
     isBlizzard.value = true
     addLog('⚠️ 暴风雪来袭！所有消耗加倍！', 'danger')
+  }
+
+  function rescueSurvivor() {
+    if (gameOver.value || isNight.value) return
+    if (rescueCooldown.value > 0) {
+      addLog(`救援冷却中，还需等待 ${rescueCooldown.value} 天`, 'warning')
+      return
+    }
+    if (food.value < RESCUE_COST_FOOD) {
+      addLog(`食物不足！救援需要 ${RESCUE_COST_FOOD} 份食物`, 'warning')
+      return
+    }
+    
+    const multiplier = isBlizzard.value ? 2 : 1
+    const tempCost = RESCUE_COST_TEMP * multiplier
+    
+    if (temperature.value <= tempCost + 10) {
+      addLog('体温太低，无法外出救援！', 'warning')
+      return
+    }
+    
+    food.value -= RESCUE_COST_FOOD
+    temperature.value = Math.max(0, temperature.value - tempCost)
+    rescueCooldown.value = RESCUE_COOLDOWN_DAYS
+    
+    const successRate = 0.5 + tools.value * 0.1
+    
+    if (Math.random() < successRate) {
+      const newSurvivor = generateRandomSurvivor()
+      survivors.value.push(newSurvivor)
+      addLog(`🎉 救援成功！${newSurvivor.name} 加入了你的团队（健康度: ${newSurvivor.health}）`, 'success')
+    } else {
+      addLog('😢 救援失败，没有找到其他幸存者', 'warning')
+    }
+    
+    checkGameOver()
+  }
+
+  function assignRole(survivorId, role) {
+    const survivor = survivors.value.find(s => s.id === survivorId)
+    if (!survivor) return
+    
+    if (role !== 'idle' && !SURVIVOR_ROLES[role]) return
+    
+    const oldRole = survivor.role
+    survivor.role = role
+    
+    if (role === 'idle') {
+      addLog(`${survivor.name} 现在处于空闲状态`, 'info')
+    } else {
+      addLog(`${survivor.name} 被分配为${SURVIVOR_ROLES[role].name}职责`, 'info')
+    }
   }
 
   function chopWood() {
@@ -230,6 +456,8 @@ export function useGame() {
       isDay: isDay.value,
       dayCount: dayCount.value,
       isBlizzard: isBlizzard.value,
+      survivors: survivors.value,
+      rescueCooldown: rescueCooldown.value,
       savedAt: Date.now()
     }
     localStorage.setItem(`snowSurvival_${slot}`, JSON.stringify(gameState))
@@ -254,6 +482,8 @@ export function useGame() {
       isDay.value = gameState.isDay
       dayCount.value = gameState.dayCount
       isBlizzard.value = gameState.isBlizzard
+      survivors.value = gameState.survivors || []
+      rescueCooldown.value = gameState.rescueCooldown || 0
       gameOver.value = false
       gameOverReason.value = ''
       actionLog.value = []
@@ -310,6 +540,8 @@ export function useGame() {
     gameOver.value = false
     gameOverReason.value = ''
     actionLog.value = []
+    survivors.value = []
+    rescueCooldown.value = 0
     
     stopTimers()
     startTimers()
@@ -320,6 +552,7 @@ export function useGame() {
   onMounted(() => {
     startTimers()
     addLog('欢迎来到雪地生存！白天收集资源，夜晚保持温暖。', 'info')
+    addLog('提示：尝试救援幸存者，他们能帮你采集、守夜和照料！', 'info')
   })
 
   onUnmounted(() => {
@@ -344,11 +577,22 @@ export function useGame() {
     canMakeFire,
     canHunt,
     huntSuccessRate,
+    survivors,
+    survivorCount,
+    gathererCount,
+    guardCount,
+    caretakerCount,
+    canRescue,
+    rescueCooldown,
+    dailyFoodConsumption,
+    SURVIVOR_ROLES,
     chopWood,
     hunt,
     makeTools,
     makeFire,
     eatFood,
+    rescueSurvivor,
+    assignRole,
     saveGame,
     loadGame,
     getSaveSlots,
